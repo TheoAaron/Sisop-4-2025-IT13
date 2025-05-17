@@ -9,6 +9,7 @@ services:
       - ./it24_host:/it24_host:ro
       - ./antink_mount:/antink_mount
       - ./antink_logs:/antink_logs
+      - ./it24.log:/var/log/it24.log  
     environment:
       - SOURCE_DIR=/it24_host
       - LOG_DIR=/antink_logs
@@ -18,6 +19,16 @@ services:
       - "/dev/fuse:/dev/fuse"
     security_opt:
       - apparmor:unconfined
+    depends_on:  
+      - logger
+
+  logger:  
+    image: busybox
+    container_name: antink-logger
+    command: tail -f /var/log/it24.log
+    volumes:
+      - ./it24.log:/var/log/it24.log
+    restart: unless-stopped
 
 volumes:
   it24_host:
