@@ -15,7 +15,7 @@
 #include <limits.h>
 
 #define BLOCK_SIZE 1024
-#define LOG_FILE "activity.log"
+#define LOG_FILE "/home/aaron31/Sisop-4-2025-IT13/soal_2/activity.log"
 #define RELICS_ZIP_URL "https://drive.google.com/uc?export=download&id=1MHVhFT57Wa9Zcx69Bv9j5ImHc9rXMH1c"
 #define RELICS_ZIP "relics.zip"
 
@@ -95,30 +95,19 @@ int relics_exists() {
 }
 
 void write_log(const char *action, const char *details) {
-    char log_path[PATH_MAX];
-    char *cwd = getcwd(NULL, 0);
-    
-    if (!cwd) {
-        perror("Error getting current working directory");
-        return;
-    }
-    
-    snprintf(log_path, sizeof(log_path), "%s/%s", cwd, LOG_FILE);
-    free(cwd);
-    
-    FILE *log_file = fopen(log_path, "a");
+    FILE *log_file = fopen(LOG_FILE, "a");
     if (!log_file) {
         perror("Error opening log file");
         return;
     }
-    
+
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     fprintf(log_file, "[%04d-%02d-%02d %02d:%02d:%02d] %s: %s\n",
-            tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
+            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
             tm->tm_hour, tm->tm_min, tm->tm_sec,
             action, details);
-    
+
     fclose(log_file);
 }
 
@@ -158,9 +147,10 @@ int count_fragments(const char *path) {
     return count;
 }
 
-static int baymax_getattr(const char *path, struct stat *stbuf) {
+static int baymax_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
+    (void)fi;
     memset(stbuf, 0, sizeof(struct stat));
-    
+
     if (strcmp(path, "/") == 0) {
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 2;
@@ -172,7 +162,7 @@ static int baymax_getattr(const char *path, struct stat *stbuf) {
         stbuf->st_mode = S_IFREG | 0644;
         stbuf->st_nlink = 1;
         stbuf->st_size = fragment_count * BLOCK_SIZE;
-        
+
         char last_fragment[PATH_MAX];
         get_fragment_path(path, fragment_count - 1, last_fragment);
         struct stat last_stat;
@@ -181,6 +171,7 @@ static int baymax_getattr(const char *path, struct stat *stbuf) {
         }
         return 0;
     }
+
     return -ENOENT;
 }
 
@@ -272,136 +263,103 @@ static int baymax_read(const char *path, char *buf, size_t size, off_t offset,
 static int baymax_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char fragment_path[PATH_MAX];
     get_fragment_path(path, 0, fragment_path);
-    
+
     FILE *f = fopen(fragment_path, "wb");
     if (!f) return -errno;
     fclose(f);
-    
+
     char log_msg[PATH_MAX];
     snprintf(log_msg, sizeof(log_msg), "%s -> %s.000", path + 1, path + 1);
     write_log("WRITE", log_msg);
-    
+
     return 0;
 }
 
 static int baymax_write(const char *path, const char *buf, size_t size, off_t offset,
                        struct fuse_file_info *fi) {
-    static int current_fragment = 0;
-    static FILE *current_file = NULL;
-    static char current_path[PATH_MAX] = "";
-    char fragment_path[PATH_MAX];
-    
-    if (offset == 0 || strcmp(path, current_path) != 0) {
-        current_fragment = 0;
-        if (current_file) fclose(current_file);
-        current_file = NULL;
-        strncpy(current_path, path, PATH_MAX - 1);
-    }
-    
     size_t bytes_written = 0;
-    while (bytes_written < size) {
-        if (!current_file || ftell(current_file) >= BLOCK_SIZE) {
-            if (current_file) {
-                fclose(current_file);
-                current_fragment++;
+    int fragment_num = offset / BLOCK_SIZE;
+    int fragment_offset = offset % BLOCK_SIZE;
+    size_t remaining = size;
+
+    char log_detail[PATH_MAX * 10] = "";
+    char *log_cursor = log_detail;
+    size_t log_len = 0;
+
+    while (remaining > 0) {
+        char fragment_path[PATH_MAX];
+        get_fragment_path(path, fragment_num, fragment_path);
+
+        FILE *fp = fopen(fragment_path, offset == 0 ? "wb" : "r+b");
+        if (!fp) return -errno;
+
+        fseek(fp, fragment_offset, SEEK_SET);
+
+        size_t chunk_size = BLOCK_SIZE - fragment_offset;
+        if (chunk_size > remaining) chunk_size = remaining;
+
+        size_t written = fwrite(buf + bytes_written, 1, chunk_size, fp);
+        fclose(fp);
+
+        if (written == 0) break;
+
+        const char *fragment_name = strrchr(fragment_path, '/');
+        if (!fragment_name) fragment_name = fragment_path;
+        else fragment_name++;
+
+        if (log_len + strlen(fragment_name) + 2 < sizeof(log_detail)) {
+            if (log_len > 0) {
+                *log_cursor++ = ',';
+                *log_cursor++ = ' ';
+                log_len += 2;
             }
-            get_fragment_path(path, current_fragment, fragment_path);
-            current_file = fopen(fragment_path, "wb");
-            if (!current_file) return -errno;
+            strcpy(log_cursor, fragment_name);
+            log_cursor += strlen(fragment_name);
+            log_len += strlen(fragment_name);
         }
-        
-        size_t space_left = BLOCK_SIZE - ftell(current_file);
-        size_t to_write = (space_left < size - bytes_written) ? space_left : size - bytes_written;
-        size_t actually_written = fwrite(buf + bytes_written, 1, to_write, current_file);
-        bytes_written += actually_written;
-        
-        if (actually_written < to_write) break;
+
+        bytes_written += written;
+        remaining -= written;
+        fragment_num++;
+        fragment_offset = 0;
     }
-    
-    if (offset + bytes_written >= size) {
-        char log_details[PATH_MAX * 10] = "";
-        char temp[PATH_MAX];
-        size_t pos = 0;
-        
-        snprintf(temp, sizeof(temp), "%s -> ", path + 1);
-        size_t len = strlen(temp);
-        if (pos + len < sizeof(log_details)) {
-            memcpy(log_details + pos, temp, len);
-            pos += len;
-        }
-        
-        for (int i = 0; i <= current_fragment && pos < sizeof(log_details); i++) {
-            get_fragment_path(path, i, temp);
-            char *fragment_name = strrchr(temp, '/');
-            if (fragment_name) fragment_name++;
-            else fragment_name = temp;
-            
-            len = strlen(fragment_name);
-            if (pos + len < sizeof(log_details)) {
-                memcpy(log_details + pos, fragment_name, len);
-                pos += len;
-            }
-            
-            if (i < current_fragment && pos + 2 < sizeof(log_details)) {
-                log_details[pos++] = ',';
-                log_details[pos++] = ' ';
-                log_details[pos] = '\0';
-            }
-        }
-        
-        write_log("WRITE", log_details);
-        if (current_file) {
-            fclose(current_file);
-            current_file = NULL;
-        }
-    }
-    
+
+    char final_log[PATH_MAX * 10];
+    snprintf(final_log, sizeof(final_log) - 1, "%s -> ", path + 1);
+    strncat(final_log, log_detail, sizeof(final_log) - strlen(final_log) - 1);
+
+    write_log("WRITE", final_log);
+
     return bytes_written;
 }
 
 static int baymax_unlink(const char *path) {
     char log_details[PATH_MAX * 10] = "";
-    char temp[PATH_MAX];
     int fragment_num = 0;
-    int fragments_deleted = 0;
-    size_t pos = 0;
-    
-    while (pos < sizeof(log_details) - 1 && fragment_num < 1000) {
-        get_fragment_path(path, fragment_num, temp);
-        if (unlink(temp) == 0) {
-            if (fragments_deleted > 0 && pos + 2 < sizeof(log_details)) {
-                log_details[pos++] = ',';
-                log_details[pos++] = ' ';
-            }
-            
-            char *fragment_name = strrchr(temp, '/');
-            fragment_name = fragment_name ? fragment_name + 1 : temp;
-            
-            size_t len = strlen(fragment_name);
-            if (pos + len < sizeof(log_details)) {
-                memcpy(log_details + pos, fragment_name, len);
-                pos += len;
-            } else {
-                break;
-            }
-            
-            fragments_deleted++;
-            fragment_num++;
-        } else {
-            if (errno == ENOENT) break;
-            return -errno;
+    int found = 0;
+
+    while (1) {
+        char fragment_path[PATH_MAX];
+        get_fragment_path(path, fragment_num, fragment_path);
+        if (access(fragment_path, F_OK) != 0) break;
+
+        if (unlink(fragment_path) == 0) {
+            if (found > 0) strcat(log_details, ", ");
+            const char *fragment_name = strrchr(fragment_path, '/');
+            strcat(log_details, fragment_name ? fragment_name + 1 : fragment_path);
+            found++;
         }
+        fragment_num++;
     }
-    
-    if (fragments_deleted > 0) {
-        char log_msg[PATH_MAX * 2 + 16];
-        snprintf(log_msg, sizeof(log_msg), "DELETE: %.*s", 
-                 (int)(sizeof(log_msg) - 10, log_details));
-        write_log("DELETE", log_msg);
+
+    if (found > 0) {
+        write_log("DELETE", log_details);
         return 0;
     }
+
     return -ENOENT;
 }
+
 
 static struct fuse_operations baymax_oper = {
     .getattr = baymax_getattr,
