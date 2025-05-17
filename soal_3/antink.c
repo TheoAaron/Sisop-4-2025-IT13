@@ -1,6 +1,8 @@
 #define FUSE_USE_VERSION 30
-
+#define _GNU_SOURCE
 #include <fuse.h>
+#include <syslog.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,11 +11,43 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <dirent.h>
+
+#define LOG_FILE "/var/log/it24.log"
 
 static const char *source_dir;
 static const char *log_dir;
+
+void write_log(const char *type, const char *message, const char *filename) {
+    time_t now;
+    time(&now);
+    struct tm *tm_info = localtime(&now);
+    
+    char timestamp[20];
+    strftime(timestamp, 20, "%Y-%m-%d %H:%M:%S", tm_info);
+    
+    FILE *log_file = fopen(LOG_FILE, "a");
+    if (log_file) {
+        fprintf(log_file, "[%s] [%s] %s: %s\n", 
+                timestamp, type, message, filename);
+        fclose(log_file);
+    }
+    
+    syslog(LOG_NOTICE, "[%s] %s: %s", type, message, filename);
+}
+
+void rot13(char *str) {
+    if (!str) return;
+    
+    for (int i = 0; str[i]; i++) {
+        char c = str[i];
+        if (c >= 'a' && c <= 'z') {
+            str[i] = ((c - 'a' + 13) % 26) + 'a';
+        } else if (c >= 'A' && c <= 'Z') {
+            str[i] = ((c - 'A' + 13) % 26) + 'A';
+        }
+    }
+}
 
 void log_warning(const char *filename) {
     time_t now;
@@ -23,9 +57,7 @@ void log_warning(const char *filename) {
     
     FILE *log_file = fopen(log_path, "a");
     if (log_file) {
-        char time_str[64];
-        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
-        fprintf(log_file, "[%s] WARNING: Suspicious file detected - %s\n", time_str, filename);
+        fprintf(log_file, "[%s] WARNING: Suspicious file detected - %s\n", ctime(&now), filename);
         fclose(log_file);
     }
 }
@@ -48,74 +80,11 @@ void reverse_string(char *str) {
     }
 }
 
-char* convert_path_if_needed(const char *path) {
-    char *full_path = (char *)malloc(1024);
-    char *dirname = strdup(path);
-    char *basename = NULL;
-    
-    char *last_slash = strrchr(dirname, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        basename = last_slash + 1;
-    } else {
-        basename = dirname;
-        dirname = strdup("");
-    }
-    
-    snprintf(full_path, 1024, "%s%s", source_dir, dirname);
-    
-    if (strlen(basename) > 0) {
-        DIR *dp = opendir(full_path);
-        if (dp) {
-            struct dirent *de;
-            int found = 0;
-            
-            char direct_path[1024];
-            snprintf(direct_path, 1024, "%s/%s", full_path, basename);
-            if (access(direct_path, F_OK) == 0) {
-                strcat(full_path, "/");
-                strcat(full_path, basename);
-                found = 1;
-            } else {
-                char reversed_name[256];
-                strcpy(reversed_name, basename);
-                reverse_string(reversed_name);
-                
-                while ((de = readdir(dp)) != NULL && !found) {
-                    if (is_suspicious(de->d_name) && strcmp(reversed_name, de->d_name) == 0) {
-                        strcat(full_path, "/");
-                        strcat(full_path, de->d_name);
-                        found = 1;
-                        break;
-                    }
-                }
-                
-                if (!found) {
-                    strcat(full_path, "/");
-                    strcat(full_path, basename);
-                }
-            }
-            
-            closedir(dp);
-        } else {
-            strcat(full_path, "/");
-            strcat(full_path, basename);
-        }
-    }
-    
-    if (dirname != path) {
-        free(dirname);
-    }
-    
-    return full_path;
-}
-
 static int antink_getattr(const char *path, struct stat *stbuf) {
-    char *full_path = convert_path_if_needed(path);
+    char full_path[1024];
+    snprintf(full_path, sizeof(full_path), "%s%s", source_dir, path);
     
     int res = lstat(full_path, stbuf);
-    free(full_path);
-    
     if (res == -1) return -errno;
     
     return 0;
@@ -144,10 +113,11 @@ static int antink_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         strcpy(displayed_name, de->d_name);
         
         if (is_suspicious(de->d_name)) {
-            log_warning(de->d_name);
-            reverse_string(displayed_name);
+        log_warning(de->d_name);
+        reverse_string(displayed_name);
+        write_log("REVERSED", "File has been reversed", displayed_name);
         }
-        
+
         filler(buf, displayed_name, &st, 0);
     }
     
@@ -156,44 +126,33 @@ static int antink_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 static int antink_open(const char *path, struct fuse_file_info *fi) {
-    char *full_path = convert_path_if_needed(path);
+    char full_path[1024];
+    snprintf(full_path, sizeof(full_path), "%s%s", source_dir, path);
     
-    int fd = open(full_path, fi->flags);
-    free(full_path);
+    int res = open(full_path, fi->flags);
+    if (res == -1) return -errno;
     
-    if (fd == -1) return -errno;
-    
-    fi->fh = fd;
+    close(res);
     return 0;
 }
-
+ 
 static int antink_read(const char *path, char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi) {
-    int fd;
-    int res;
+    char full_path[1024];
+    snprintf(full_path, sizeof(full_path), "%s%s", source_dir, path);
     
-    if (fi == NULL) {
-        char *full_path = convert_path_if_needed(path);
-        fd = open(full_path, O_RDONLY);
-        free(full_path);
-        if (fd == -1) return -errno;
-    } else {
-        fd = fi->fh;
-    }
+    int fd = open(full_path, O_RDONLY);
+    if (fd == -1) return -errno;
     
-    res = pread(fd, buf, size, offset);
+    int res = pread(fd, buf, size, offset);
     if (res == -1) res = -errno;
     
-    if (fi == NULL) {
-        close(fd);
+    if (!is_suspicious(path)) {
+    rot13(buf);
     }
-    
-    return res;
-}
 
-static int antink_release(const char *path, struct fuse_file_info *fi) {
-    close(fi->fh);
-    return 0;
+    close(fd);
+    return res;
 }
 
 static struct fuse_operations antink_oper = {
@@ -201,7 +160,6 @@ static struct fuse_operations antink_oper = {
     .readdir = antink_readdir,
     .open = antink_open,
     .read = antink_read,
-    .release = antink_release,
 };
 
 int main(int argc, char *argv[]) {
@@ -213,24 +171,19 @@ int main(int argc, char *argv[]) {
     
     mkdir(log_dir, 0755);
     
-    if (argc > 1) {
-        return fuse_main(argc, argv, &antink_oper, NULL);
-    } 
-    else {
-        char *fuse_argv[] = {
-            argv[0],
-            "-f",
-            "-d",
-            "/antink_mount",
-            NULL
-        };
-        int fuse_argc = 4;
-        
-        printf("=== Starting AntiNK FUSE Filesystem ===\n");
-        printf("Source directory: %s\n", source_dir);
-        printf("Log directory: %s\n", log_dir);
-        printf("Mount point: /antink_mount\n");
-        
-        return fuse_main(fuse_argc, fuse_argv, &antink_oper, NULL);
-    }
+    char *fuse_argv[] = {
+        argv[0],
+        "-f",  
+        "-d",  
+        "/antink_mount",  
+        NULL
+    };
+    int fuse_argc = 4;
+    
+    printf("=== Starting AntiNK FUSE Filesystem ===\n");
+    printf("Source directory: %s\n", source_dir);
+    printf("Log directory: %s\n", log_dir);
+    printf("Mount point: /antink_mount\n");
+    
+    return fuse_main(fuse_argc, fuse_argv, &antink_oper, NULL);
 }
