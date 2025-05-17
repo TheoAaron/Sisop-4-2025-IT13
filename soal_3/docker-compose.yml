@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  antink-server:
+    build: .
+    container_name: antink-server
+    privileged: true
+    volumes:
+      - ./it24_host:/it24_host:ro
+      - ./antink_mount:/antink_mount
+      - ./antink_logs:/antink_logs
+    environment:
+      - SOURCE_DIR=/it24_host
+      - LOG_DIR=/antink_logs
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - "/dev/fuse:/dev/fuse"
+    security_opt:
+      - apparmor:unconfined
+
+volumes:
+  it24_host:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./it24_host
+      o: bind
+  antink_mount:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./antink_mount
+      o: bind
+  antink_logs:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./antink_logs
+      o: bind
