@@ -15,7 +15,11 @@
 #include <openssl/aes.h>
 #include <zlib.h>
 
+<<<<<<< HEAD
 #define BASEDIR "/home/ubuntu/maimai_fs/chiho"
+=======
+#define BASEDIR "/home/aaron31/Sisop-4-2025-IT13/soal_4/chiho"
+>>>>>>> f38c36f (Update README)
 #define MAX_PATH 1024
 
 static const char *areas[] = {

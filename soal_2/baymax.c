@@ -360,6 +360,18 @@ static int baymax_unlink(const char *path) {
     return -ENOENT;
 }
 
+static int baymax_release(const char *path, struct fuse_file_info *fi) {
+    (void) fi;
+
+    if (count_fragments(path) == 0) return 0;
+
+    char log_msg[PATH_MAX * 2];
+    snprintf(log_msg, sizeof(log_msg), "%s -> %s", path + 1, base_dir);
+    write_log("COPY", log_msg);
+
+    return 0;
+}
+
 
 static struct fuse_operations baymax_oper = {
     .getattr = baymax_getattr,
@@ -369,6 +381,7 @@ static struct fuse_operations baymax_oper = {
     .create = baymax_create,
     .write = baymax_write,
     .unlink = baymax_unlink,
+    .release = baymax_release,
 };
 
 int main(int argc, char *argv[]) {
