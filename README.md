@@ -1,6 +1,6 @@
 # Modul 4
 
-## Soal 1
+## *Soal 1*
 
 Pada soal ini, diberikan sebuah file zip yang berisi 7 file txt yang berisi string hexadecimal yang sangat panjang. File yang berisi string hexadecimal ini, akan diubah menjadi gambar berdasarkan filenya masing-masing.
 
@@ -22,7 +22,7 @@ Seperti biasa, terdapat error handling jika program tidak dapat melakukan konver
 
 Semua konversi dari hexadecimal yang dilakukan program akan tercatat pada file `conversion.log` yang telah dibuat secara otomatis oleh program itu sendiri.
 
-## Soal 2
+## *Soal 2*
 
 Pada nomor ini, diberikan sebuah file zip bernama `relics` yang berisi file pecahan jpeg yang tiap-tiap filenya berukuran maksimal 1KB. File-file pecahan ini harus digabungkan menjadi satu file image yang akan ditampilkan layaknya gambar biasa.
 
