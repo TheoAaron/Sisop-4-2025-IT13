@@ -59,6 +59,32 @@ Jika sebuah function digunakan, maka akan tercatat pada file `activity.log` yang
 
 ## Soal 3
 
+Pada modul ini, kita diminta untuk membuat program docker yang digunakan untuk beberapa kondisi yaitu ketika menemukan sebuah file bernama kimcun dan nafis
+
+---
+
+## 📌 Fitur Utama
+
+1. mendeteksi file dengan kata kunci "nafis" atau "kimcun" dan membalikkan nama file tersebut saat ditampilkan. Saat file berbahaya (kimcun atau nafis) terdeteksi, sistem akan mencatat peringatan ke dalam log.
+2. enkripsi isi file original
+3. membuat antink-server dan antink-logger dalam container
+
+## Penjelasan File
+
+### Dockerfile
+
+![Image](https://github.com/user-attachments/assets/77d41c60-5a84-438d-8e47-089d4e6e7041)
+
+Jadi file kode diatas untuk menjalankan program dockerfile, dengan menggunakan Ubuntu:22.04 yang berisi package yang dibutuhkan untuk menjalankan program antink.
+
+### Docker-compose.yml
+
+Digunakan untuk menghubungkan antink dengan berbagai direktori dalam container terisolasi
+
+### antink.c
+
+Berisi kode program.c yang digunakan untuk memfungsikan sistem FUSE serta berbagai fitur seperti reverse dan ROT13
+
 ## Soal 4
 
 ## *Soal*
